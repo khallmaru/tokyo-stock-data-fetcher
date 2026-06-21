@@ -1,0 +1,50 @@
+name: Daily Stock Data Fetcher
+
+on:
+  schedule:
+    # 毎日 UTC 20:00 (日本時間 翌朝 5:00) に自動実行
+    - cron: '0 20 * * *'
+  workflow_dispatch: # テスト用に手動実行ボタンを出す
+
+jobs:
+  build-and-save:
+    runs-on: ubuntu-latest
+
+    # GitHub Actionsにリポジトリへの書き込み権限（ファイルを保存する権限）を与える
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas yfinance matplotlib openpyxl xlrd pyarrow
+
+    - name: Run Stock Analysis
+      run: python main.py
+
+    # 【重要】生成されたCSVや画像をGitHubリポジトリに保存（プッシュ）する
+    - name: Commit and Push changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # 変更があったファイル（csvやpng）をステージング
+        git add *.csv *.png || true
+        
+        # 変更があればコミットしてプッシュ
+        if ! git diff --cached --quiet; then
+          git commit -m "Update daily stock data: $(date +'%Y-%m-%d')"
+          git push
+        else
+          echo "No changes to commit"
+        fi
