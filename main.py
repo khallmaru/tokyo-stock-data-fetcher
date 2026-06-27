@@ -66,14 +66,12 @@ def main():
                 'High': 'High',
                 'Low': 'Low',
                 'Close': 'Close',
-                'Adj Close': 'Adj Close',
-                'Adj_Close': 'Adj Close',
                 'Volume': 'Volume'
             }
             df_stacked = df_stacked.rename(columns=rename_dict)
 
             # 3. 実際にデータフレーム内に存在する列だけを抽出する（存在しない列を要求してエラーになるのを防ぐ）
-            target_columns = ['Date', 'Code', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
+            target_columns = ['Date', 'Code', 'Open', 'High', 'Low', 'Close', 'Volume']
             available_columns = [col for col in target_columns if col in df_stacked.columns]
             
             df_cleaned = df_stacked[available_columns]
