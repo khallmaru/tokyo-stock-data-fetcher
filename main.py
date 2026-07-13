@@ -1,28 +1,11 @@
 import pandas as pd
 import yfinance as yf
 import time
-
-
-def get_jpx_codes():
-    # 1. JPXから銘柄コードを取得
-    url = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls"
-    jpx_df = pd.read_excel(url)
-    # 一度文字列として扱い、全角や余計な空白を除去してから「XXXX.T」にする
-    codes = []
-    for code in jpx_df['コード'].dropna():
-        code_str = str(code).strip()
-    
-        # もしExcelの読み込み仕様で「1301.0」のように小数点が付いてしまった場合の対策
-        if code_str.endswith('.0'):
-            code_str = code_str[:-2]
-            
-        codes.append(f"{code_str}.T")
-    
-    return codes
+from jpx_master_manager import get_jpx_codes_from_master
 
 def main():
     print("Fetching JPX stock list...")
-    all_codes = get_jpx_codes()
+    all_codes = get_jpx_codes_from_master()
     #all_codes = ["7203.T", "6758.T", "6861.T"]  # テスト用のコードリスト
     total_count = len(all_codes)
     print(f"Total JPX codes fetched: {total_count}")
