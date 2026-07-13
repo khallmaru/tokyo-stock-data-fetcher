@@ -1,4 +1,4 @@
 .venv/
 *.code-workspace
-jpx_master_raw.csv
-data/
+#jpx_master_raw.csv
+#data/

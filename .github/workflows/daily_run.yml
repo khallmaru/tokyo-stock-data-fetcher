@@ -32,18 +32,30 @@ jobs:
     - name: Run Python script
       run: python main.py
 
-    # 5. 生成された Parquet ファイルを自動的に GitHub へコミット＆プッシュする
-    - name: Commit and Push Parquet file
+    # 5. 生成されたすべてのデータ（Parquet / CSV）を自動的に GitHub へコミット＆プッシュする
+    - name: Commit and Push all stock data
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         
-        # ファイル変化がある場合のみコミットしてプッシュ
+        # 1. 念のため daily_stock_data.parquet の存在チェック（既存の安全対策を継承）
         if [ -f daily_stock_data.parquet ]; then
+          echo "Success: daily_stock_data.parquet found."
           git add daily_stock_data.parquet
-          git diff-index --quiet HEAD || git commit -m "Update daily stock data [skip ci]"
-          git push
         else
           echo "Error: daily_stock_data.parquet not found!"
           exit 1
         fi
+        
+        # 2. 🔥 新たに jpx_master_raw.csv と data/ フォルダを Git の追跡対象に追加
+        if [ -f jpx_master_raw.csv ]; then
+          git add jpx_master_raw.csv
+        fi
+        if [ -d data ]; then
+          git add data/
+        fi
+        
+        # 3. 変化がある場合のみコミットしてプッシュ
+        # (git diff-index --quiet HEAD || ... の記述で、何か1つでも変更があればコミットします)
+        git diff-index --quiet HEAD || git commit -m "Update daily stock data and JPX master [skip ci]"
+        git push
