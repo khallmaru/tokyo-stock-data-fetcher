@@ -1,6 +1,11 @@
 import pandas as pd
 import os
 
+# 💡 自分（jpx_master_manager.py）が置いてあるフォルダの絶対パスを取得
+# これにより、どこから実行されても常に「tokyo-stock-data-fetcher/」を指すようになる
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+csv_path = os.path.join(BASE_DIR, "jpx_master_raw.csv")
+
 # グローバルキャッシュ（初回読み込み時のみCSVを読み込む）
 _master_cache = None
 
@@ -32,10 +37,10 @@ def _load_master_cache():
     
     try:
         # CSV読み込み（ダウンロード成功後または既存ファイルがある場合）
-        if not os.path.exists("jpx_master_raw.csv"):
+        if not os.path.exists(csv_path):
             raise FileNotFoundError("jpx_master_raw.csv が見つかりません。")
         
-        df = pd.read_csv("jpx_master_raw.csv", encoding="cp932")
+        df = pd.read_csv(csv_path, encoding="cp932")
         # 「13010」(5桁) の先頭4桁を切り出して「1301」にする
         df['code_4deg'] = df['銘柄コード'].astype(str).str[:4]
         
