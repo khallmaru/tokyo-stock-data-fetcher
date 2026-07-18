@@ -9,6 +9,36 @@ csv_path = os.path.join(BASE_DIR, "jpx_master_raw.csv")
 # グローバルキャッシュ（初回読み込み時のみCSVを読み込む）
 _master_cache = None
 
+
+def load_jpx_master_dict_from_existing_csv(csv_path_override=None):
+    """
+    既にダウンロード済みの jpx_master_raw.csv だけを読み込んで、
+    4桁コード→銘柄情報辞書を返します。
+    この関数はダウンロード処理を実行しません。
+    """
+    target_path = csv_path_override or csv_path
+
+    if not os.path.exists(target_path):
+        print(f"⚠️  {target_path} が見つかりません。空のマスタを返します。")
+        return {}
+
+    try:
+        df = pd.read_csv(target_path, encoding="cp932")
+        df = df.copy()
+        df['code_4deg'] = df['銘柄コード'].astype(str).str[:4]
+
+        master = {}
+        for _, row in df.iterrows():
+            code = str(row['code_4deg'])
+            master[code] = row.to_dict()
+
+        print(f"✅ 既存の JPXマスタを読み込みました（{len(master)}件の銘柄）。")
+        return master
+    except Exception as e:
+        print(f"❌ 既存の jpx_master_raw.csv の読み込みに失敗しました: {e}")
+        return {}
+
+
 def _load_master_cache():
     """
     jpx_master_raw.csvを読み込みキャッシュに保存します（初回のみ実行）。
@@ -112,6 +142,33 @@ def get_short_name(code):
     
     except Exception:
         # エラー時はコード自身を返す
+        return str(code)
+
+
+def get_short_name_from_existing_csv(code, csv_path_override=None):
+    """
+    既にダウンロード済みの jpx_master_raw.csv だけを使って、
+    4桁コードから短縮名を取得します。
+    この関数はダウンロード処理を実行しません。
+    """
+    try:
+        master = load_jpx_master_dict_from_existing_csv(csv_path_override)
+        code_str = str(code)
+
+        if code_str not in master:
+            return code_str
+
+        brand_info = master[code_str]
+        short_name = brand_info.get('銘柄略称', '')
+        if pd.notna(short_name) and str(short_name).strip():
+            return short_name
+
+        full_name = brand_info.get('銘柄名称', '')
+        if pd.notna(full_name) and str(full_name).strip():
+            return full_name
+
+        return code_str
+    except Exception:
         return str(code)
 
 def get_brand_info(code):
