@@ -2,7 +2,7 @@ import pandas as pd
 import yfinance as yf
 import time
 from jpx_master_manager import get_jpx_codes_from_master
-from datetime import datetime
+from datetime import datetime, timedelta
 
 def main():
     print("Fetching JPX stock list...")
@@ -12,9 +12,11 @@ def main():
     print(f"Total JPX codes fetched: {total_count}")
     
     # --- 設定：レート制限対策 ---
-    chunk_size = 25  # Rate limit 対策: 100銘柄 → 25銘柄に削減
+    chunk_size = 50  # yfinance の安定性と取得効率のバランス
     initial_sleep = 20  # 初回: 20秒待機
     retry_sleep = 30  # 再試行時: 30秒待機
+    start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+    end_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
     all_chunks_data = []
     failed_chunks = []  # 失敗したチャンク情報を記録
 
@@ -33,7 +35,14 @@ def main():
         for retry_count in range(2):  # 最初の試行 + 1回の再試行 = 計2回
             try:
                 # ダウンロード実行
-                data = yf.download(" ".join(chunk_codes), period="2y", group_by='ticker', threads=True)
+                data = yf.download(
+                    tickers=" ".join(chunk_codes),
+                    start=start_date,
+                    end=end_date,
+                    group_by='ticker',
+                    threads=False,
+                    multi_level_index=False
+                )
                 
                 if data.empty:
                     print(f"  ⚠️  Chunk {current_block} returned empty data.")
