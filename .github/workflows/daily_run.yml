@@ -3,9 +3,9 @@ name: Daily Stock Data Fetcher
 on:
   # 手動実行用ボタンを設置
   workflow_dispatch:
-  # 定期実行（日本時間の翌アサ4時41分）
+  # 定期実行（日本時間の翌朝7時5分）
   schedule:
-    - cron: '41 19 * * *'
+    - cron: '5 22 * * *'
 
 jobs:
   run_script:
