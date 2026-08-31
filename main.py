@@ -15,14 +15,14 @@ def main():
     chunk_size = 50  # yfinance の安定性と取得効率のバランス
     initial_sleep = 20  # 初回: 20秒待機
     retry_sleep = 30  # 再試行時: 30秒待機
-    start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
-    end_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+
+    # 日本時間での現在時刻を基準にし、終値が確定している直近営業日まで取得する
+    jst_now = datetime.now() + timedelta(hours=9)
+    start_date = (jst_now - timedelta(days=730)).strftime('%Y-%m-%d')
+    end_date = (jst_now + timedelta(days=1)).strftime('%Y-%m-%d')
+
     all_chunks_data = []
     failed_chunks = []  # 失敗したチャンク情報を記録
-
-    # 2年前の日付と今日の日付を設定（yfinanceのバグ対策）
-    end_date = datetime.now().strftime("%Y-%m-%d")
-    start_date = (datetime.now() - timedelta(days=2*365)).strftime("%Y-%m-%d")
 
     print(f"Starting bulk download in chunks of {chunk_size}...")
 
@@ -104,9 +104,23 @@ def main():
     if all_chunks_data:
         print("\nCombining all chunks into one file...")
         final_df = pd.concat(all_chunks_data, ignore_index=True)
-        
+
         # 念のため重複データを排除
         final_df.drop_duplicates(subset=['Date', 'Code'], inplace=True)
+
+        # --- 直近日付のデータ品質を検証 ---
+        if not final_df.empty:
+            latest_date = final_df['Date'].max()
+            latest_df = final_df[final_df['Date'] == latest_date]
+            ohlc_cols = ['Open', 'High', 'Low', 'Close']
+            nan_ratio = latest_df[ohlc_cols].isna().mean().mean()
+            print(f"Latest date in dataset: {latest_date}")
+            print(f"Latest OHLC NaN ratio: {nan_ratio:.2%}")
+
+            if nan_ratio > 0.30:
+                print("⚠️  Latest date OHLC data is too sparse; skipping Parquet save to avoid writing bad data.")
+                print(f"   Saved rows: {len(final_df)}; latest_date rows: {len(latest_df)}")
+                raise SystemExit("Abort: latest OHLC data quality check failed.")
 
         # --- Parquet形式で保存 ---
         output_filename = "daily_stock_data.parquet"
