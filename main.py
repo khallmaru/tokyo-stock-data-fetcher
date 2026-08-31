@@ -20,6 +20,10 @@ def main():
     all_chunks_data = []
     failed_chunks = []  # 失敗したチャンク情報を記録
 
+    # 2年前の日付と今日の日付を設定（yfinanceのバグ対策）
+    end_date = datetime.now().strftime("%Y-%m-%d")
+    start_date = (datetime.now() - timedelta(days=2*365)).strftime("%Y-%m-%d")
+
     print(f"Starting bulk download in chunks of {chunk_size}...")
 
     # チャンクを分割してループ
