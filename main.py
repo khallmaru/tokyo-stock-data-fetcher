@@ -1,10 +1,12 @@
 import pandas as pd
 import yfinance as yf
 import time
+import os
 from jpx_master_manager import get_jpx_codes_from_master
 from datetime import datetime, timedelta
 
-def main():
+def fetch_all_data(start_date, end_date):
+    """1回分の全株価データ取得と結合を行い、(final_df, failed_chunks) を返す。"""
     print("Fetching JPX stock list...")
     all_codes = get_jpx_codes_from_master()
     #all_codes = ["7203.T", "6758.T", "6861.T"]  # テスト用のコードリスト
@@ -15,11 +17,6 @@ def main():
     chunk_size = 50  # yfinance の安定性と取得効率のバランス
     initial_sleep = 20  # 初回: 20秒待機
     retry_sleep = 30  # 再試行時: 30秒待機
-
-    # 日本時間での現在時刻を基準にし、終値が確定している直近営業日まで取得する
-    jst_now = datetime.now() + timedelta(hours=9)
-    start_date = (jst_now - timedelta(days=730)).strftime('%Y-%m-%d')
-    end_date = (jst_now + timedelta(days=1)).strftime('%Y-%m-%d')
 
     all_chunks_data = []
     failed_chunks = []  # 失敗したチャンク情報を記録
@@ -107,9 +104,38 @@ def main():
 
         # 念のため重複データを排除
         final_df.drop_duplicates(subset=['Date', 'Code'], inplace=True)
+    else:
+        final_df = pd.DataFrame()
+
+    return final_df, failed_chunks
+
+
+def main():
+    # --- 品質チェック失敗時の再実行設定（環境変数で上書き可能） ---
+    max_attempts = int(os.environ.get("MAX_ATTEMPTS", "3"))
+    retry_wait_minutes = int(os.environ.get("RETRY_WAIT_MINUTES", "60"))
+
+    final_df = pd.DataFrame()
+    failed_chunks = []
+
+    for attempt in range(1, max_attempts + 1):
+        print(f"\n{'=' * 40}")
+        print(f"=== Attempt {attempt}/{max_attempts} ===")
+
+        # 日本時間での現在時刻を基準にし、終値が確定している直近営業日まで取得する
+        # 再試行の待機時間を考慮し、試行ごとに日付範囲を再計算する
+        jst_now = datetime.now() + timedelta(hours=9)
+        start_date = (jst_now - timedelta(days=730)).strftime('%Y-%m-%d')
+        end_date = (jst_now + timedelta(days=1)).strftime('%Y-%m-%d')
+
+        final_df, failed_chunks = fetch_all_data(start_date, end_date)
 
         # --- 直近日付のデータ品質を検証 ---
-        if not final_df.empty:
+        failure_reason = None
+        if final_df.empty:
+            print("❌ Error: No data was collected.")
+            failure_reason = "no data was collected"
+        else:
             latest_date = final_df['Date'].max()
             latest_df = final_df[final_df['Date'] == latest_date]
             ohlc_cols = ['Open', 'High', 'Low', 'Close']
@@ -120,16 +146,25 @@ def main():
             if nan_ratio > 0.30:
                 print("⚠️  Latest date OHLC data is too sparse; skipping Parquet save to avoid writing bad data.")
                 print(f"   Saved rows: {len(final_df)}; latest_date rows: {len(latest_df)}")
-                raise SystemExit("Abort: latest OHLC data quality check failed.")
+                failure_reason = "latest OHLC data quality check failed"
 
-        # --- Parquet形式で保存 ---
-        output_filename = "daily_stock_data.parquet"
-        final_df.to_parquet(output_filename, index=False)
-        print(f"✅ Successfully saved all data to {output_filename}")
-        print(f"   Total records: {len(final_df)}")
-    else:
-        print("❌ Error: No data was collected.")
-    
+        # 品質チェック合格 → Parquet形式で保存してループを抜ける
+        if failure_reason is None:
+            output_filename = "daily_stock_data.parquet"
+            final_df.to_parquet(output_filename, index=False)
+            print(f"✅ Successfully saved all data to {output_filename}")
+            print(f"   Total records: {len(final_df)}")
+            break
+
+        # 品質チェック失敗 → 試行回数が残っていれば待機してから再実行
+        if attempt < max_attempts:
+            print(f"\n⏳ {failure_reason}.")
+            print(f"   再実行まで {retry_wait_minutes} 分待機します（{attempt}/{max_attempts} 回目）。")
+            time.sleep(retry_wait_minutes * 60)
+        else:
+            print(f"\n❌ {max_attempts} 回の試行を終了しました: {failure_reason}")
+            raise SystemExit(f"Abort: {failure_reason} after {max_attempts} attempts.")
+
     # --- 失敗したチャンクをログファイルに記録 ---
     if failed_chunks:
         log_filename = "failed_chunks.log"
