@@ -3,9 +3,10 @@ name: Daily Stock Data Fetcher
 on:
   # 手動実行用ボタンを設置
   workflow_dispatch:
-  # 定期実行（日本時間の18時00分）
+  # 定期実行（日本時間の18時00分、GitHubのスケジューラ遅延により実際はJST 22時頃〜未明に開始）
   schedule:
-    - cron: '0 9 * * 1-5'
+    - cron: '0 9 * * 1-5'   # 月〜金
+    - cron: '0 9 * * 6,0'   # 土/日：金曜データの確定遅延（Yahooの翌朝確定）を週末にバックフィルする保険
 
 jobs:
   run_script:

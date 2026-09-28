@@ -1,4 +1,5 @@
 .venv/
 *.code-workspace
+.local_token
 #jpx_master_raw.csv
 #data/
