@@ -411,7 +411,8 @@ def main():
         raise SystemExit(f"Abort: latest OHLC data quality check failed (NaN ratio {nan_ratio:.2%})")
 
     # 7) Parquet形式で保存
-    combined.to_parquet(OUTPUT_FILENAME, index=False)
+    # zstd 圧縮を使用（既定の snappy より約15% 小さく、2年×全銘柄で約50MBに収まる）
+    combined.to_parquet(OUTPUT_FILENAME, index=False, compression='zstd')
     print(f"✅ Successfully saved all data to {OUTPUT_FILENAME}")
     print(f"   Total records: {len(combined)}")
 
