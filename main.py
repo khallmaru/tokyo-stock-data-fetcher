@@ -20,6 +20,33 @@ TARGET_COLUMNS = ['Date', 'Code', 'Open', 'High', 'Low', 'Close', 'Volume']
 SPLIT_LOG_FILENAME = "splits_refresh.log"
 FAILED_LOG_FILENAME = "failed_chunks.log"
 
+
+def _normalize_dates(d):
+    """Date 列を一律に naive datetime64[ns]（JST 基準）に正規化する。
+
+    yfinance は取得経路によって naive / timezone-aware（Asia/Tokyo）/
+    文字列のいずれかの日付を返す。これらが混在すると Date 列が object 型に
+    なり、pandas の日付演算や to_parquet が失敗する
+    （ArrowTypeError: object of type <class 'str'> cannot be converted to int）。
+    """
+    seq = d if isinstance(d, pd.Series) else pd.Series(list(d))
+
+    def _to_naive_jst(x):
+        if x is None or x is pd.NaT:
+            return pd.NaT
+        if isinstance(x, str):
+            x = pd.Timestamp(x)
+        elif isinstance(x, datetime):
+            x = pd.Timestamp(x)
+        if isinstance(x, pd.Timestamp) and x.tzinfo is not None:
+            x = x.tz_convert('Asia/Tokyo').tz_localize(None)
+        return x
+
+    out = pd.to_datetime(seq.map(_to_naive_jst), errors='coerce')
+    if isinstance(d, pd.Series):
+        return out
+    return out.tolist()
+
 # --- レート制限対策（チャンク単位バルク取得） ---
 CHUNK_SIZE = 50      # yfinance の安定性と取得効率のバランス
 INITIAL_SLEEP = 20   # チャンク成功時: 20秒待機
@@ -38,6 +65,7 @@ def load_existing_data():
         print(f"Loading existing data from {OUTPUT_FILENAME}...")
         try:
             existing_df = pd.read_parquet(OUTPUT_FILENAME)
+            existing_df = existing_df.assign(Date=_normalize_dates(existing_df['Date']))
             print(f"Loaded {len(existing_df):,} rows for {existing_df['Code'].nunique():,} codes.")
             return existing_df
         except Exception as e:
@@ -69,7 +97,7 @@ def build_fetch_plan(all_codes, existing_df, jst_now):
     last_date_by_code = {}
     if not existing_df.empty and {'Code', 'Date'} <= set(existing_df.columns):
         last_date_by_code = (
-            existing_df.assign(Date=existing_df['Date'].astype(str))
+            existing_df.assign(Date=_normalize_dates(existing_df['Date']).dt.strftime('%Y-%m-%d'))
             .groupby('Code')['Date'].max().to_dict()
         )
 
@@ -84,7 +112,7 @@ def build_fetch_plan(all_codes, existing_df, jst_now):
             up_to_date_count += 1
             continue
         else:
-            start = (datetime.strptime(last_date, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
+            start = (pd.to_datetime(last_date) + timedelta(days=1)).strftime('%Y-%m-%d')
             delta_count += 1
         plan.setdefault(start, []).append(code)
 
@@ -193,6 +221,8 @@ def fetch_chunked(codes, start_date, end_date):
         print("\nCombining all chunks into one file...")
         final_df = pd.concat(all_chunks_data, ignore_index=True)
 
+        # Date を naive datetime64[ns] に正規化（tz 付き/文字列混入を防ぐ）
+        final_df['Date'] = _normalize_dates(final_df['Date'])
         # 念のため重複データを排除
         final_df.drop_duplicates(subset=['Date', 'Code'], inplace=True)
     else:
@@ -214,7 +244,7 @@ def detect_and_refresh_splits(combined, end_date):
     if combined.empty:
         return combined
 
-    df = combined.assign(Date=combined['Date'].astype(str)).sort_values(['Code', 'Date'])
+    df = combined.assign(Date=_normalize_dates(combined['Date'])).sort_values(['Code', 'Date'])
     prev_close = df.groupby('Code', sort=False)['Close'].shift(1)
     gap = (df['Close'] - prev_close) / prev_close
     gap_rows = df[gap.abs() > SPLIT_GAP_THRESHOLD]
@@ -288,7 +318,9 @@ def detect_and_refresh_splits(combined, end_date):
             continue
         part = part.reset_index()
         part = part.rename(columns={'index': 'Date'})
-        part['Date'] = part['Date'].astype(str)
+        # tz 付きの Date を naive datetime64[ns]（JST 基準）に正規化する。
+        # astype(str) にすると object 列となり to_parquet が ArrowTypeError で失敗する。
+        part['Date'] = _normalize_dates(part['Date'])
         part['Code'] = code
         part = part[['Date', 'Code', 'Open', 'High', 'Low', 'Close', 'Volume']]
         refreshed_parts.append(part)
@@ -357,16 +389,19 @@ def main():
     combined = detect_and_refresh_splits(combined, end_date)
 
     # 5) 直近730日ウィンドウに整形
-    cutoff = (jst_now - timedelta(days=DATA_WINDOW_DAYS)).strftime('%Y-%m-%d')
-    combined = combined[combined['Date'].astype(str) >= cutoff].reset_index(drop=True)
+    # 最終的なセーフティネット: Date が常に naive datetime64[ns] であることを保証する
+    # （object 列のまま to_parquet に渡すと ArrowTypeError になる）
+    combined['Date'] = _normalize_dates(combined['Date'])
+    cutoff = jst_now - timedelta(days=DATA_WINDOW_DAYS)
+    combined = combined[combined['Date'] >= cutoff].reset_index(drop=True)
     available_columns = [col for col in TARGET_COLUMNS if col in combined.columns]
     combined = combined[available_columns]
 
     # 6) 品質チェック（失敗時は例外で終了 → GitHub Actions 側の再実行に委譲）
     if combined.empty:
         raise SystemExit("Abort: no data was collected.")
-    latest_date = combined['Date'].astype(str).max()
-    latest_df = combined[combined['Date'].astype(str) == latest_date]
+    latest_date = combined['Date'].max()
+    latest_df = combined[combined['Date'] == latest_date]
     ohlc_cols = ['Open', 'High', 'Low', 'Close']
     nan_ratio = latest_df[ohlc_cols].isna().mean().mean()
     print(f"Latest date in dataset: {latest_date}")
