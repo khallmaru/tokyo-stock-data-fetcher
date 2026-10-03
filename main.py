@@ -242,8 +242,12 @@ def detect_and_refresh_splits(combined, end_date):
             continue
 
         # ギャップ日と分割記録日が SPLIT_VERIFY_WINDOW_DAYS 以内に近接するものだけを裏付けとする
+        # （Yahoo の分割インデックスはタイムゾーン付き、我々の Date は tz なし → 引き算前に正規化）
         try:
-            split_dates = [pd.Timestamp(idx) for idx in splits.index]
+            split_dates = []
+            for idx in splits.index:
+                ts = pd.Timestamp(idx)
+                split_dates.append(ts.tz_localize(None) if ts.tzinfo is not None else ts)
         except Exception:
             split_dates = []
         matched = any(
