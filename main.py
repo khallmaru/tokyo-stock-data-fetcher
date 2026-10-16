@@ -8,7 +8,14 @@ from datetime import datetime, timedelta
 # =============================================================================
 # 設定（環境変数で上書き可能）
 # =============================================================================
-FULL_REFRESH = os.environ.get("FULL_REFRESH", "0").strip().upper() in ("1", "TRUE", "YES")
+def _env_flag(name, default):
+    v = os.environ.get(name)
+    if v is None or not v.strip():
+        return bool(default)
+    return v.strip().upper() in ("1", "TRUE", "YES")
+
+FULL_REFRESH = _env_flag("FULL_REFRESH", False)      # 環境変数 FULL_REFRESH=1 で常にフル取得
+SUNDAY_FULL = _env_flag("SUNDAY_FULL", True)         # 日曜(JST)は週次として全銘柄2年フル取得（既定ON）
 DATA_WINDOW_DAYS = 730            # 保存する履歴の長さ（約2年）
 SPLIT_GAP_THRESHOLD = float(os.environ.get("SPLIT_GAP_THRESHOLD", "0.35"))
 # 分割候補を確定させる際に許容する ギャップ日↔分割記録日 の日数差
@@ -19,6 +26,19 @@ OUTPUT_FILENAME = "daily_stock_data.parquet"
 TARGET_COLUMNS = ['Date', 'Code', 'Open', 'High', 'Low', 'Close', 'Volume']
 SPLIT_LOG_FILENAME = "splits_refresh.log"
 FAILED_LOG_FILENAME = "failed_chunks.log"
+
+
+def should_full_refresh(jst_now):
+    """フル取得（全銘柄・2年分一括）にすべきかを判定する。
+
+    - FULL_REFRESH=1          : 常にフル取得
+    - SUNDAY_FULL=1(既定) and 日曜(JST) : 週次のフル取得
+    """
+    if FULL_REFRESH:
+        return True
+    if SUNDAY_FULL and jst_now.weekday() == 6:  # Python: weekday 6 = 日曜
+        return True
+    return False
 
 
 def _normalize_dates(d):
@@ -82,14 +102,15 @@ def build_fetch_plan(all_codes, existing_df, jst_now):
     - 新規銘柄（既存Parquetにない）  : start = 現在 - 730日（2年分一括）
     - 未更新銘柄（最終日 < 昨日JST） : start = その銘柄の最終日 + 1日
     - 最新化済み銘柄（最終日 >= 昨日JST）: スキップ
-    FULL_REFRESH=1 なら全銘柄 2年分一括。
+    FULL_REFRESH=1 または SUNDAY_FULL=1 かつ日曜(JST) なら全銘柄 2年分一括。
 
     戻り値: {start日文字列: [codes]}（yf.download は共通 start のため start 日でグループ化）
     """
     full_start = (jst_now - timedelta(days=DATA_WINDOW_DAYS)).strftime('%Y-%m-%d')
 
-    if FULL_REFRESH:
-        print("\n=== FULL_REFRESH mode: fetching 2 years for ALL codes ===")
+    if should_full_refresh(jst_now):
+        reason = "FULL_REFRESH=1" if FULL_REFRESH else "Sunday JST (SUNDAY_FULL)"
+        print(f"\n=== FULL_REFRESH mode ({reason}): fetching 2 years for ALL codes ===")
         return {full_start: list(all_codes)}
 
     yst_jst = (jst_now - timedelta(days=1)).strftime('%Y-%m-%d')
@@ -354,7 +375,15 @@ def main():
     print(f"Total JPX codes fetched: {total_count}")
 
     # 1) 差分取得計画（新規=2年分、既存=最終日+1日、最新化済み=スキップ）
-    existing_df = load_existing_data()
+    #    フル取得時は新データが既存データを完全に置き換えるため、
+    #    既存 Parquet の読み込み（40MB〜）をスキップして所要時間を短縮する。
+    #    detect_and_refresh_splits() はそのまま実行される。
+    if should_full_refresh(jst_now):
+        reason = "FULL_REFRESH=1" if FULL_REFRESH else "Sunday JST (SUNDAY_FULL)"
+        print(f"\n[Full refresh mode via {reason}] Skipping load_existing_data().")
+        existing_df = pd.DataFrame(columns=TARGET_COLUMNS)
+    else:
+        existing_df = load_existing_data()
     plan = build_fetch_plan(all_codes, existing_df, jst_now)
 
     if not plan and existing_df.empty:
