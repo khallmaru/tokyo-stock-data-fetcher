@@ -2,8 +2,33 @@ import pandas as pd
 import yfinance as yf
 import time
 import os
+import holidays
 from jpx_master_manager import get_jpx_codes_from_master
 from datetime import datetime, timedelta
+
+# 日本株の祝日カレンダー（振替休日含む）。holidays パッケージで取得する。
+_JP_HOLIDAYS = holidays.Japan()
+
+
+def _is_trading_day(d):
+    """平日かつ祝日でなければ取引日とみなす。"""
+    return d.weekday() < 5 and d not in _JP_HOLIDAYS
+
+
+def _target_trading_day(jst_now):
+    """直近に相場が終了した取引日（取得すべき対象日）を算出する。
+
+    基準は JST 16時（15:30 終値 + 余裕）:
+    - JST 16時以降 : 当日が候補（取引日でなければ前へ遡る）
+    - JST 16時未満 : 前日から候補（取引日でなければ前へ遡る）
+    週末・祝日は相場が終了していないため、いずれも前営業日まで遡る。
+    """
+    d = jst_now.date()
+    if jst_now.hour < 16:
+        d -= timedelta(days=1)
+    while not _is_trading_day(d):
+        d -= timedelta(days=1)
+    return d
 
 # =============================================================================
 # 設定（環境変数で上書き可能）
@@ -100,8 +125,9 @@ def build_fetch_plan(all_codes, existing_df, jst_now):
     """銘柄ごとの差分取得 start 日付を割り当てる。
 
     - 新規銘柄（既存Parquetにない）  : start = 現在 - 730日（2年分一括）
-    - 未更新銘柄（最終日 < 昨日JST） : start = その銘柄の最終日 + 1日
-    - 最新化済み銘柄（最終日 >= 昨日JST）: スキップ
+    - 未更新銘柄（最終日 < 対象取引日）: start = その銘柄の最終日 + 1日
+    - 最新化済み銘柄（最終日 >= 対象取引日）: スキップ
+    対象取引日 = 直近に相場が終了した日（JST 16時以降=当日 / 16時未満=前営業日、祝日・週末は遡る）
     FULL_REFRESH=1 または SUNDAY_FULL=1 かつ日曜(JST) なら全銘柄 2年分一括。
 
     戻り値: {start日文字列: [codes]}（yf.download は共通 start のため start 日でグループ化）
@@ -113,7 +139,9 @@ def build_fetch_plan(all_codes, existing_df, jst_now):
         print(f"\n=== FULL_REFRESH mode ({reason}): fetching 2 years for ALL codes ===")
         return {full_start: list(all_codes)}
 
-    yst_jst = (jst_now - timedelta(days=1)).strftime('%Y-%m-%d')
+    # 取得すべき対象取引日（JST 16時以降=当日 / 16時未満=前営業日、祝日・週末は遡る）
+    target = _target_trading_day(jst_now).strftime('%Y-%m-%d')
+    print(f"\nTarget trading day (latest completed session): {target}")
 
     last_date_by_code = {}
     if not existing_df.empty and {'Code', 'Date'} <= set(existing_df.columns):
@@ -129,7 +157,7 @@ def build_fetch_plan(all_codes, existing_df, jst_now):
         if last_date is None:
             start = full_start
             new_count += 1
-        elif last_date >= yst_jst:
+        elif last_date >= target:
             up_to_date_count += 1
             continue
         else:
